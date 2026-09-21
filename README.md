@@ -3,7 +3,7 @@
 A fast and lightweight TCP port scanner and service banner grabber written in Python. 
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Async Banner Scanner Demonstration" width="850">
+  <img src="assets/scanner-demo.gif" alt="Async Banner Scanner Demonstration" width="850">
 </p>
 
 Built with network reconnaissance and security assessments in mind, **Async Banner Scanner** scans single IP addresses, CIDR network ranges, hostnames, or target lists from a file concurrently using Python's native `asyncio`. Beyond simply detecting open ports, it probes responsive services to grab protocol banners (such as OpenSSH, Apache, Nginx, vsFTPd, Redis, MySQL, and more) and extract software versions.
@@ -135,7 +135,7 @@ pytest -v
 یک ابزار سریع، سبک و ناهمگام (Asynchronous) برای اسکن پورت‌های TCP و استخراج بنر سرویس‌های شبکه که با پایتون پیاده‌سازی شده است.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="دموی کارکرد اسکنر" width="850">
+  <img src="assets/scanner-demo.gif" alt="دموی کارکرد اسکنر" width="850">
 </p>
 
 این ابزار با تمرکز بر سرعت و کارایی در مراحل شناسایی شبکه و ارزیابی‌های امنیتی طراحی شده است. **Async Banner Scanner** با بهره‌گیری از کتابخانه داخلی `asyncio` در پایتون، توانایی اسکن هم‌زمان آدرس‌های تکی، رنج‌های شبکه‌ای CIDR، نام دامنه‌ها یا فایل‌های حاوی لیستی از اهداف را دارد؛ بدون اینکه سیستم میزبان را با کمبود سوکت یا فایل دیسکریپتور مواجه کند. علاوه بر تشخیص باز یا بسته بودن پورت، این ابزار با پورت‌های باز تعامل برقرار کرده و بنر سرویس‌ها (نظیر OpenSSH، Apache، Nginx، vsFTPd، Redis، MySQL و...) را دریافت کرده و نسخه آن‌ها را شناسایی می‌کند.
