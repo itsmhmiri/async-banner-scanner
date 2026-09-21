@@ -23,7 +23,9 @@ from async_banner_scanner.output import (
 from async_banner_scanner.scanner import run_scanner
 from async_banner_scanner.target_parser import generate_targets
 
-console = Console()
+import shutil
+
+console = Console(force_terminal=True, width=shutil.get_terminal_size((100, 24)).columns)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -136,6 +138,7 @@ def setup_logging(verbose: bool) -> None:
 
 async def async_main(args: argparse.Namespace) -> int:
     """Execute asynchronous scanning workflow based on parsed arguments."""
+    console.width = shutil.get_terminal_size((100, 24)).columns
     # 1. Parse targets and ports
     try:
         targets = list(
