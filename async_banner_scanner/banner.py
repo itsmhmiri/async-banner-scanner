@@ -212,8 +212,9 @@ async def grab_banner(
     """
     raw_data = b""
 
-    # Stage 1: Generic Passive Read
-    passive_timeout = min(timeout, 1.0)
+    # Stage 1: Passive Read (services like SSH, FTP, SMTP greet upon connect)
+    greeting_ports = {21, 22, 23, 25, 110, 119, 143, 993, 995, 3306}
+    passive_timeout = min(timeout, 0.8) if port in greeting_ports else min(timeout, 0.2)
     raw_data = await _safe_read(reader, timeout=passive_timeout, max_bytes=1024)
 
     # Stage 2: Active Probing if passive greeting was not received
@@ -234,13 +235,25 @@ async def grab_banner(
                 # Active probe: generic line break trigger
                 writer.write(b"\r\n\r\n")
                 await writer.drain()
-                raw_data = await _safe_read(reader, timeout=min(timeout, 0.8), max_bytes=1024)
+                raw_data = await _safe_read(reader, timeout=min(timeout, 0.3), max_bytes=1024)
 
                 # Secondary generic probe if still empty
                 if not raw_data:
                     writer.write(b"HELP\r\n")
                     await writer.drain()
-                    raw_data = await _safe_read(reader, timeout=min(timeout, 0.8), max_bytes=1024)
+                    raw_data = await _safe_read(reader, timeout=min(timeout, 0.3), max_bytes=1024)
+
+                # Tertiary HTTP probe fallback for web servers on non-standard ports
+                if not raw_data:
+                    http_probe = (
+                        f"HEAD / HTTP/1.1\r\n"
+                        f"Host: {host}\r\n"
+                        f"User-Agent: Mozilla/5.0 (compatible; AsyncBannerScanner/0.1)\r\n"
+                        f"Connection: close\r\n\r\n"
+                    ).encode("ascii", errors="replace")
+                    writer.write(http_probe)
+                    await writer.drain()
+                    raw_data = await _safe_read(reader, timeout=min(timeout, 0.5), max_bytes=1024)
         except (ConnectionError, OSError) as err:
             logger.debug(f"Active probe error on {host}:{port}: {err}")
 
