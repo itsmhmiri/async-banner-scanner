@@ -385,8 +385,18 @@ def fingerprint_udp_banner(
         service_name = DEFAULT_UDP_PORT_SERVICES.get(port, "unknown")
         return None, service_name, None
 
-    # 1. DNS Response (port 53 or 5353)
-    if port in (53, 5353) or (len(data) >= 12 and data[:2] == b"\x13\x37"):
+    # 1. DNS Response (port 53, 5353, matching query ID, or valid DNS response flags)
+    is_dns = (
+        port in (53, 5353)
+        or (len(data) >= 12 and data[:2] == b"\x13\x37")
+        or (
+            len(data) >= 12
+            and (data[2] & 0x80) != 0
+            and (data[3] & 0x0F) in (0, 1, 2, 3, 5)
+            and (data[4:6] != b"\x00\x00" or data[6:8] != b"\x00\x00")
+        )
+    )
+    if is_dns:
         service_name = "mdns" if port == 5353 else "domain"
         flags = int.from_bytes(data[2:4], "big")
         rcode = flags & 0x0F
