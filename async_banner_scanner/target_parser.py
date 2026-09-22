@@ -8,7 +8,7 @@ import os
 import socket
 from typing import Iterable, Iterator, List, Optional, Sequence, Set
 
-from async_banner_scanner.models import Target
+from async_banner_scanner.models import Target, TransportProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,18 @@ TOP_100_PORTS: List[int] = [
     8000, 8008, 8009, 8080, 8081, 8443, 8888, 9100, 9999, 10000, 32768, 49152,
     49153, 49154, 49155, 49156, 49157,
 ]
+
+# Top 100 most commonly scanned UDP ports (DNS, DHCP, TFTP, NTP, SNMP, NetBIOS, SSDP, etc.)
+TOP_100_UDP_PORTS: List[int] = [
+    7, 9, 13, 17, 19, 37, 42, 49, 53, 67, 68, 69, 88, 111, 118, 123, 135, 136,
+    137, 138, 139, 143, 156, 161, 162, 177, 201, 213, 220, 389, 443, 445, 464,
+    500, 513, 514, 515, 517, 518, 520, 521, 525, 533, 546, 547, 631, 996, 997,
+    998, 999, 1025, 1026, 1027, 1028, 1029, 1030, 1433, 1434, 1645, 1646, 1701,
+    1718, 1719, 1812, 1813, 1900, 2000, 2049, 2222, 2223, 3283, 3478, 4045, 4500,
+    5000, 5060, 5353, 5683, 6000, 6001, 7000, 7070, 8000, 8080, 8443, 8888, 9200,
+    10000, 11211, 17185, 20031, 27017, 30718, 31337, 32768, 32769, 32770, 32771,
+    33434, 49152, 49153, 49154, 49155, 49156,
+][:100]
 
 # Additional ports to form Top 1000 most common ports
 _ADDITIONAL_TOP_1000_PORTS: List[int] = [
@@ -101,7 +113,11 @@ _ADDITIONAL_TOP_1000_PORTS: List[int] = [
 TOP_1000_PORTS: List[int] = sorted(list(set(TOP_100_PORTS + _ADDITIONAL_TOP_1000_PORTS)))[:1000]
 
 
-def parse_ports(ports_spec: Optional[str] = None, top_ports: Optional[int] = None) -> List[int]:
+def parse_ports(
+    ports_spec: Optional[str] = None,
+    top_ports: Optional[int] = None,
+    protocol: TransportProtocol = TransportProtocol.TCP,
+) -> List[int]:
     """Parse port string, range, or top-ports preset into a sorted list of unique port numbers.
 
     Supported formats:
@@ -114,6 +130,7 @@ def parse_ports(ports_spec: Optional[str] = None, top_ports: Optional[int] = Non
     Args:
         ports_spec: Port list or range string (e.g., "80,443,8000-8080").
         top_ports: Scan top N ports (100 or 1000).
+        protocol: Transport protocol (TCP or UDP) for selecting corresponding top ports preset.
 
     Returns:
         Sorted list of unique valid integer port numbers (1-65535).
@@ -123,6 +140,8 @@ def parse_ports(ports_spec: Optional[str] = None, top_ports: Optional[int] = Non
     """
     if top_ports is not None:
         if top_ports == 100:
+            if protocol == TransportProtocol.UDP:
+                return sorted(list(set(TOP_100_UDP_PORTS)))
             return sorted(list(set(TOP_100_PORTS)))
         elif top_ports == 1000:
             return sorted(list(set(TOP_1000_PORTS)))
@@ -131,6 +150,8 @@ def parse_ports(ports_spec: Optional[str] = None, top_ports: Optional[int] = Non
 
     if not ports_spec:
         # Default to Top 100 ports if neither -p nor --top-ports is given
+        if protocol == TransportProtocol.UDP:
+            return sorted(list(set(TOP_100_UDP_PORTS)))
         return sorted(list(set(TOP_100_PORTS)))
 
     ports: Set[int] = set()
@@ -250,18 +271,21 @@ def generate_targets(
     target_spec: str,
     ports_spec: Optional[str] = None,
     top_ports: Optional[int] = None,
+    protocols: Sequence[TransportProtocol] = (TransportProtocol.TCP,),
 ) -> Iterator[Target]:
-    """Generate Target(host, port) tuples from target and port specifications.
+    """Generate Target(host, port, protocol) tuples from target and port specifications.
 
     Args:
         target_spec: Target string (IP, CIDR, hostname, file path).
         ports_spec: Port list/range specification.
         top_ports: Top ports preset (100 or 1000).
+        protocols: Sequence of transport protocols to scan (e.g. TCP, UDP, or both).
 
     Yields:
-        Target objects with host and port.
+        Target objects with host, port, and protocol.
     """
-    ports = parse_ports(ports_spec=ports_spec, top_ports=top_ports)
     for host in parse_targets(target_spec):
-        for port in ports:
-            yield Target(host=host, port=port)
+        for proto in protocols:
+            ports = parse_ports(ports_spec=ports_spec, top_ports=top_ports, protocol=proto)
+            for port in ports:
+                yield Target(host=host, port=port, protocol=proto)
