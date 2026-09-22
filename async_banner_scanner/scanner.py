@@ -5,11 +5,18 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
+import socket
 import time
 from typing import Any, Awaitable, Callable, Iterable, List, Optional, Union
 
-from async_banner_scanner.banner import fingerprint_banner, grab_banner
-from async_banner_scanner.models import PortStatus, ScanResult, Target
+from async_banner_scanner.banner import (
+    DEFAULT_UDP_PORT_SERVICES,
+    fingerprint_banner,
+    fingerprint_udp_banner,
+    get_udp_probe,
+    grab_banner,
+)
+from async_banner_scanner.models import PortStatus, ScanResult, Target, TransportProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +57,23 @@ async def scan_target(
     grab_banner_flag: bool = True,
     semaphore: Optional[asyncio.Semaphore] = None,
 ) -> ScanResult:
-    """Scan an individual Target (host, port) using asynchronous TCP connect.
+    """Scan an individual Target (host, port, protocol) using asynchronous TCP connect or UDP probe.
 
     Args:
-        target: Target host and port to scan.
-        timeout: Socket connection and banner timeout in seconds.
+        target: Target host, port, and protocol to scan.
+        timeout: Socket connection/probe and banner timeout in seconds.
         grab_banner_flag: Whether to perform active banner grabbing on open ports.
         semaphore: Optional asyncio semaphore for concurrency bounding.
 
     Returns:
         ScanResult populated with port status, latency, and banner info.
     """
+    if target.protocol == TransportProtocol.UDP:
+        if semaphore is not None:
+            async with semaphore:
+                return await _execute_udp_probe(target, timeout, grab_banner_flag)
+        return await _execute_udp_probe(target, timeout, grab_banner_flag)
+
     if semaphore is not None:
         async with semaphore:
             return await _execute_tcp_probe(target, timeout, grab_banner_flag)
@@ -85,6 +98,7 @@ async def _execute_tcp_probe(
         return ScanResult(
             host=target.host,
             port=target.port,
+            protocol=TransportProtocol.TCP,
             status=PortStatus.CLOSED,
             latency_ms=None,
         )
@@ -92,6 +106,7 @@ async def _execute_tcp_probe(
         return ScanResult(
             host=target.host,
             port=target.port,
+            protocol=TransportProtocol.TCP,
             status=PortStatus.FILTERED,
             latency_ms=None,
         )
@@ -101,6 +116,7 @@ async def _execute_tcp_probe(
             return ScanResult(
                 host=target.host,
                 port=target.port,
+                protocol=TransportProtocol.TCP,
                 status=PortStatus.CLOSED,
                 latency_ms=None,
             )
@@ -108,6 +124,7 @@ async def _execute_tcp_probe(
             return ScanResult(
                 host=target.host,
                 port=target.port,
+                protocol=TransportProtocol.TCP,
                 status=PortStatus.FILTERED,
                 latency_ms=None,
             )
@@ -115,6 +132,7 @@ async def _execute_tcp_probe(
         return ScanResult(
             host=target.host,
             port=target.port,
+            protocol=TransportProtocol.TCP,
             status=PortStatus.FILTERED,
             latency_ms=None,
         )
@@ -149,12 +167,98 @@ async def _execute_tcp_probe(
     return ScanResult(
         host=target.host,
         port=target.port,
+        protocol=TransportProtocol.TCP,
         status=PortStatus.OPEN,
         latency_ms=latency_ms,
         banner_raw=banner_raw,
         service_name=service_name,
         service_version=service_version,
     )
+
+
+async def _execute_udp_probe(
+    target: Target,
+    timeout: float,
+    grab_banner_flag: bool,
+) -> ScanResult:
+    """Internal implementation of UDP probe transmission, response detection, and ICMP analysis."""
+    t_start = time.perf_counter()
+    loop = asyncio.get_running_loop()
+    family = socket.AF_INET6 if ":" in target.host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+
+    try:
+        sock.connect((target.host, target.port))
+        probe = get_udp_probe(target.port, host=target.host)
+        await loop.sock_sendall(sock, probe)
+
+        data = await asyncio.wait_for(loop.sock_recv(sock, 4096), timeout=timeout)
+        latency_ms = (time.perf_counter() - t_start) * 1000.0
+
+        banner_raw, service_name, service_version = (
+            fingerprint_udp_banner(data, port=target.port)
+            if grab_banner_flag
+            else (None, DEFAULT_UDP_PORT_SERVICES.get(target.port, "unknown"), None)
+        )
+
+        return ScanResult(
+            host=target.host,
+            port=target.port,
+            protocol=TransportProtocol.UDP,
+            status=PortStatus.OPEN,
+            latency_ms=latency_ms,
+            banner_raw=banner_raw,
+            service_name=service_name,
+            service_version=service_version,
+        )
+    except (ConnectionRefusedError, ConnectionResetError):
+        return ScanResult(
+            host=target.host,
+            port=target.port,
+            protocol=TransportProtocol.UDP,
+            status=PortStatus.CLOSED,
+            latency_ms=None,
+            service_name=DEFAULT_UDP_PORT_SERVICES.get(target.port, "unknown"),
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        return ScanResult(
+            host=target.host,
+            port=target.port,
+            protocol=TransportProtocol.UDP,
+            status=PortStatus.OPEN_FILTERED,
+            latency_ms=None,
+            service_name=DEFAULT_UDP_PORT_SERVICES.get(target.port, "unknown"),
+        )
+    except OSError as err:
+        if err.errno in (errno.ECONNREFUSED, errno.ECONNRESET):
+            return ScanResult(
+                host=target.host,
+                port=target.port,
+                protocol=TransportProtocol.UDP,
+                status=PortStatus.CLOSED,
+                latency_ms=None,
+                service_name=DEFAULT_UDP_PORT_SERVICES.get(target.port, "unknown"),
+            )
+        elif err.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
+            return ScanResult(
+                host=target.host,
+                port=target.port,
+                protocol=TransportProtocol.UDP,
+                status=PortStatus.FILTERED,
+                latency_ms=None,
+                service_name=DEFAULT_UDP_PORT_SERVICES.get(target.port, "unknown"),
+            )
+        return ScanResult(
+            host=target.host,
+            port=target.port,
+            protocol=TransportProtocol.UDP,
+            status=PortStatus.OPEN_FILTERED,
+            latency_ms=None,
+            service_name=DEFAULT_UDP_PORT_SERVICES.get(target.port, "unknown"),
+        )
+    finally:
+        sock.close()
 
 
 async def run_scanner(
