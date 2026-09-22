@@ -13,7 +13,7 @@ from typing import List, Optional
 from rich.console import Console
 
 from async_banner_scanner import __version__
-from async_banner_scanner.models import ScanResult
+from async_banner_scanner.models import ScanResult, TransportProtocol
 from async_banner_scanner.output import (
     create_progress_bar,
     export_csv,
@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct and configure the command-line argument parser."""
     parser = argparse.ArgumentParser(
         prog="async-scanner",
-        description="Asynchronous TCP Port and Service Banner Scanner",
+        description="Asynchronous TCP/UDP Port and Service Banner Scanner",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -57,6 +57,20 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[100, 1000],
         default=None,
         help="Scan top N most common ports (100 or 1000)",
+    )
+    parser.add_argument(
+        "-u",
+        "--udp",
+        dest="udp",
+        action="store_true",
+        help="Scan UDP ports instead of TCP",
+    )
+    parser.add_argument(
+        "--protocol",
+        dest="protocol",
+        choices=["tcp", "udp", "all"],
+        default=None,
+        help="Transport protocol to scan: tcp, udp, or all (default: tcp)",
     )
     parser.add_argument(
         "-c",
@@ -139,6 +153,15 @@ def setup_logging(verbose: bool) -> None:
 async def async_main(args: argparse.Namespace) -> int:
     """Execute asynchronous scanning workflow based on parsed arguments."""
     console.width = shutil.get_terminal_size((100, 24)).columns
+
+    # Determine transport protocols to scan
+    if args.protocol == "all":
+        protocols = (TransportProtocol.TCP, TransportProtocol.UDP)
+    elif args.protocol == "udp" or args.udp:
+        protocols = (TransportProtocol.UDP,)
+    else:
+        protocols = (TransportProtocol.TCP,)
+
     # 1. Parse targets and ports
     try:
         targets = list(
@@ -146,6 +169,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 target_spec=args.target,
                 ports_spec=args.ports,
                 top_ports=args.top_ports,
+                protocols=protocols,
             )
         )
     except Exception as err:
@@ -156,8 +180,10 @@ async def async_main(args: argparse.Namespace) -> int:
         console.print("[bold yellow]No valid targets resolved. Please check your target specification.[/bold yellow]")
         return 1
 
+    proto_label = "/".join(p.value.upper() for p in protocols)
     console.print(
         f"[bold blue]Async Banner Scanner v{__version__}[/bold blue] | "
+        f"Protocol: [cyan]{proto_label}[/cyan] | "
         f"Queued [cyan]{len(targets)}[/cyan] target probes | "
         f"Concurrency: [cyan]{args.concurrency}[/cyan] | "
         f"Timeout: [cyan]{args.timeout}s[/cyan]"
