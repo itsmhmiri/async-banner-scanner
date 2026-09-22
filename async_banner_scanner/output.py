@@ -73,6 +73,7 @@ def export_csv(results: Sequence[ScanResult], file_path: str) -> None:
     fieldnames = [
         "host",
         "port",
+        "protocol",
         "status",
         "latency_ms",
         "service_name",
@@ -129,6 +130,8 @@ def print_results_table(
             status_styled = "[bold green]OPEN[/bold green]"
         elif res.status == PortStatus.CLOSED:
             status_styled = "[red]CLOSED[/red]"
+        elif res.status == PortStatus.OPEN_FILTERED:
+            status_styled = "[dim yellow]OPEN|FILTERED[/dim yellow]"
         else:
             status_styled = "[yellow]FILTERED[/yellow]"
 
@@ -145,9 +148,11 @@ def print_results_table(
         else:
             banner_ver = "-"
 
+        port_display = f"{res.port}/{res.protocol.value}" if hasattr(res, "protocol") and res.protocol else str(res.port)
+
         table.add_row(
             res.host,
-            str(res.port),
+            port_display,
             status_styled,
             latency_str,
             service_str,
@@ -165,6 +170,7 @@ def print_results_table(
     open_count = sum(1 for r in results if r.status == PortStatus.OPEN)
     closed_count = sum(1 for r in results if r.status == PortStatus.CLOSED)
     filtered_count = sum(1 for r in results if r.status == PortStatus.FILTERED)
+    open_filtered_count = sum(1 for r in results if r.status == PortStatus.OPEN_FILTERED)
 
     duration_str = f" in {duration_sec:.2f}s" if duration_sec is not None else ""
     summary_text = (
@@ -173,4 +179,7 @@ def print_results_table(
         f"[bold red]Closed:[/bold red] {closed_count} | "
         f"[bold yellow]Filtered:[/bold yellow] {filtered_count}"
     )
+    if open_filtered_count > 0:
+        summary_text += f" | [bold dim yellow]Open|Filtered:[/bold dim yellow] {open_filtered_count}"
+
     console.print(Panel(summary_text, title="[bold]Scan Summary[/bold]", border_style="blue", expand=False))
