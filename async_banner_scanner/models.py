@@ -8,23 +8,32 @@ from typing import Any, Dict, Optional
 import datetime
 
 
+class TransportProtocol(str, Enum):
+    """Network transport layer protocol."""
+
+    TCP = "tcp"
+    UDP = "udp"
+
+
 class PortStatus(str, Enum):
     """Network port scan outcome status."""
 
     OPEN = "OPEN"
     CLOSED = "CLOSED"
     FILTERED = "FILTERED"  # Connection timed out or host/network unreachable
+    OPEN_FILTERED = "OPEN|FILTERED"  # Common in UDP when no response or ICMP error is received
 
 
 @dataclass(frozen=True)
 class Target:
-    """Individual scan destination defined by host address and TCP port number."""
+    """Individual scan destination defined by host address, port, and transport protocol."""
 
     host: str
     port: int
+    protocol: TransportProtocol = TransportProtocol.TCP
 
     def __str__(self) -> str:
-        return f"{self.host}:{self.port}"
+        return f"{self.host}:{self.port}/{self.protocol.value}"
 
 
 @dataclass
@@ -34,6 +43,7 @@ class ScanResult:
     host: str
     port: int
     status: PortStatus
+    protocol: TransportProtocol = TransportProtocol.TCP
     latency_ms: Optional[float] = None
     banner_raw: Optional[str] = None
     service_name: Optional[str] = "unknown"
@@ -47,6 +57,7 @@ class ScanResult:
         return {
             "host": self.host,
             "port": self.port,
+            "protocol": self.protocol.value,
             "status": self.status.value,
             "latency_ms": round(self.latency_ms, 2) if self.latency_ms is not None else None,
             "banner_raw": self.banner_raw.strip() if self.banner_raw else None,
