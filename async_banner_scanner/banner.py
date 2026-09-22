@@ -264,3 +264,196 @@ async def grab_banner(
     cleaned = clean_banner_text(raw_data)
     service_name, version = fingerprint_banner(cleaned, port=port)
     return cleaned, service_name, version
+
+
+# UDP default port mappings
+DEFAULT_UDP_PORT_SERVICES = {
+    53: "domain",
+    67: "bootps",
+    68: "bootpc",
+    69: "tftp",
+    88: "kerberos-sec",
+    111: "rpcbind",
+    123: "ntp",
+    135: "msrpc",
+    137: "netbios-ns",
+    138: "netbios-dgm",
+    161: "snmp",
+    162: "snmptrap",
+    389: "cldap",
+    445: "microsoft-ds",
+    500: "isakmp",
+    514: "syslog",
+    520: "rip",
+    631: "ipp",
+    1194: "openvpn",
+    1434: "ms-sql-m",
+    1701: "l2tp",
+    1812: "radius",
+    1813: "radius-acct",
+    1900: "ssdp",
+    2049: "nfs",
+    3478: "stun",
+    4500: "nat-t-ike",
+    5060: "sip",
+    5353: "mdns",
+    5683: "coap",
+    11211: "memcached",
+}
+
+
+def get_udp_probe(port: int, host: str = "127.0.0.1") -> bytes:
+    """Generate a protocol-specific UDP probe payload for the specified port.
+
+    Args:
+        port: Destination UDP port number.
+        host: Destination host address.
+
+    Returns:
+        Bytes sequence to transmit.
+    """
+    if port == 53:
+        # DNS standard query for google.com (Type A, Class IN)
+        return b"\x13\x37\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01"
+    elif port == 123:
+        # NTP client request (NTPv3, client mode 3, 48 bytes)
+        return b"\x1b" + (b"\x00" * 47)
+    elif port in (161, 162):
+        # SNMPv1 GetRequest for sysDescr.0 (community 'public')
+        return (
+            b"\x30\x29\x02\x01\x00\x04\x06public\xa0\x1c\x02\x04\x13\x37\x42\x00"
+            b"\x02\x01\x00\x02\x01\x00\x30\x0e\x30\x0c\x06\x08\x2b\x06\x01\x02\x01"
+            b"\x01\x01\x00\x05\x00"
+        )
+    elif port == 137:
+        # NetBIOS Name Service: Node Status query
+        return (
+            b"\x80\x94\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+            b"\x20CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00\x00\x21\x00\x01"
+        )
+    elif port == 1900:
+        # SSDP M-SEARCH discovery probe
+        return (
+            b"M-SEARCH * HTTP/1.1\r\n"
+            b"HOST: 239.255.255.250:1900\r\n"
+            b"MAN: \"ssdp:discover\"\r\n"
+            b"MX: 1\r\n"
+            b"ST: ssdp:all\r\n\r\n"
+        )
+    elif port == 5060:
+        # SIP OPTIONS ping
+        return (
+            b"OPTIONS sip:nm@nm SIP/2.0\r\n"
+            b"Via: SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bK-1337\r\n"
+            b"Max-Forwards: 70\r\n"
+            b"To: <sip:nm@nm>\r\n"
+            b"From: <sip:nm@nm>;tag=1337\r\n"
+            b"Call-ID: 1337@nm\r\n"
+            b"CSeq: 1 OPTIONS\r\n"
+            b"Content-Length: 0\r\n\r\n"
+        )
+    elif port == 1434:
+        # Microsoft SQL Server Browser probe (CLNT_UCAST_EX)
+        return b"\x02"
+    elif port == 69:
+        # TFTP Read Request (RRQ) for test.txt
+        return b"\x00\x01test.txt\x00octet\x00"
+    elif port == 5353:
+        # mDNS query for _services._dns-sd._udp.local
+        return (
+            b"\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+            b"\x09_services\x07_dns-sd\x04_udp\x05local\x00\x00\x0c\x00\x01"
+        )
+    else:
+        # Generic UDP trigger
+        return b"\r\n\r\n"
+
+
+def fingerprint_udp_banner(
+    data: bytes, port: int = 0
+) -> Tuple[Optional[str], str, Optional[str]]:
+    """Analyze UDP response data and port to identify service and version details.
+
+    Args:
+        data: Raw UDP payload bytes received from host.
+        port: Target UDP port number.
+
+    Returns:
+        Tuple of (banner_raw, service_name, service_version).
+    """
+    if not data:
+        service_name = DEFAULT_UDP_PORT_SERVICES.get(port, "unknown")
+        return None, service_name, None
+
+    # 1. DNS Response (port 53 or 5353)
+    if port in (53, 5353) or (len(data) >= 12 and data[:2] == b"\x13\x37"):
+        service_name = "mdns" if port == 5353 else "domain"
+        flags = int.from_bytes(data[2:4], "big")
+        rcode = flags & 0x0F
+        rcode_names = {0: "NoError", 1: "FormErr", 2: "ServFail", 3: "NXDomain", 5: "Refused"}
+        rcode_str = rcode_names.get(rcode, f"RCode={rcode}")
+        banner_raw = f"DNS Response ({rcode_str})"
+        return banner_raw, service_name, rcode_str
+
+    # 2. NTP Response (port 123 or 48-byte NTP response)
+    if port == 123 or (len(data) == 48 and (data[0] & 0x07) == 4):
+        version = (data[0] >> 3) & 0x07
+        stratum = data[1]
+        ver_str = f"NTPv{version} (Stratum {stratum})"
+        banner_raw = f"NTP Server Stratum={stratum} Version={version}"
+        return banner_raw, "ntp", ver_str
+
+    # 3. SNMP Response (port 161, 162 or ASN.1 sequence starting with 0x30)
+    if port in (161, 162) or (data.startswith(b"\x30") and b"public" in data):
+        # Extract printable strings inside SNMP response
+        all_strings = [
+            s.decode("utf-8", errors="ignore")
+            for s in re.findall(rb"[\x20-\x7e]{4,}", data)
+            if s != b"public"
+        ]
+        version_str = all_strings[0] if all_strings else None
+        banner_raw = f"SNMP Response: {version_str}" if version_str else "SNMP Agent Active"
+        return banner_raw, "snmp", version_str
+
+    # 4. NetBIOS Name Service (port 137)
+    if port == 137 or (len(data) > 56 and data[2:4] == b"\x84\x00"):
+        match = re.search(rb"([A-Za-z0-9_-]{3,15})", data[56:])
+        name_str = match.group(1).decode("ascii", errors="ignore") if match else None
+        banner_raw = f"NetBIOS Name: {name_str}" if name_str else "NetBIOS-NS Active"
+        return banner_raw, "netbios-ns", name_str
+
+    # 5. SSDP / UPnP (port 1900 or HTTP/1.)
+    if port == 1900 or data.startswith(b"HTTP/1."):
+        cleaned = clean_banner_text(data)
+        service, version = fingerprint_banner(cleaned, port=port)
+        return cleaned, "ssdp" if service == "unknown" else service, version
+
+    # 6. SIP (port 5060 or starts with SIP/2.0)
+    if port == 5060 or data.startswith(b"SIP/2.0"):
+        cleaned = clean_banner_text(data)
+        srv_match = re.search(r"(?:Server|User-Agent):\s*([^\r\n]+)", cleaned, re.IGNORECASE)
+        ver = srv_match.group(1).strip() if srv_match else None
+        return cleaned, "sip", ver
+
+    # 7. MSSQL Browser (port 1434)
+    if port == 1434 and data.startswith(b"\x05"):
+        cleaned = clean_banner_text(data[3:])
+        ver_match = re.search(r"Version;([0-9.]+)", cleaned, re.IGNORECASE)
+        ver = ver_match.group(1) if ver_match else None
+        return cleaned, "ms-sql-m", ver
+
+    # 8. TFTP (port 69)
+    if port == 69 and len(data) >= 4 and data[:2] == b"\x00\x05":
+        err_msg = clean_banner_text(data[4:])
+        return f"TFTP Error: {err_msg}", "tftp", None
+
+    # Fallback to general text decoding and fingerprinting
+    cleaned = clean_banner_text(data)
+    service_name = DEFAULT_UDP_PORT_SERVICES.get(port, "unknown")
+    if cleaned:
+        fp_serv, fp_ver = fingerprint_banner(cleaned, port=port)
+        if fp_serv != "unknown":
+            service_name = fp_serv
+        return cleaned, service_name, fp_ver
+
+    return None, service_name, None
